@@ -120,9 +120,9 @@ logging:
     com.fieldwork.ops: INFO
     org.hibernate.SQL: WARN
     org.flywaydb: INFO
-  # Console JSON layout is configured in logback-spring.xml (Phase 9).
-  # Until then, the correlation ID is available on the MDC under
-  # `correlationId` and included in the default pattern via that file.
+  # No JSON log layout is configured: logging is plain console output.
+  # The correlation ID is available on the MDC under `correlationId`
+  # for every request (see CorrelationIdFilter).
 
 # Phase 6 async/event processing. All values have built-in defaults and
 # can be overridden via environment variables (Spring relaxed binding):

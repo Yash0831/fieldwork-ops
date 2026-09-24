@@ -1,4 +1,4 @@
-# Fieldwork Ops — Frontend Console (Phase 8)
+# Fieldwork Ops — Frontend Console
 
 React 18 + TypeScript + Vite operations console for the fieldwork-ops backend.
 Hand-rolled CSS, no UI framework. Dependencies are deliberately minimal:
