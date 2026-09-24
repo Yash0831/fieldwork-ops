@@ -6,6 +6,7 @@ import com.fieldwork.ops.auth.User;
 import com.fieldwork.ops.auth.UserRepository;
 import com.fieldwork.ops.common.exception.IdempotencyConflictException;
 import com.fieldwork.ops.common.exception.ResourceNotFoundException;
+import com.fieldwork.ops.common.security.CurrentUser;
 import com.fieldwork.ops.sla.SlaService;
 import com.fieldwork.ops.workorder.event.WorkOrderCreatedEvent;
 import com.fieldwork.ops.workorder.event.WorkOrderStatusChangedEvent;
@@ -28,6 +29,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -89,8 +91,8 @@ public class WorkOrderService {
      * loser catches the integrity violation, clears the poisoned
      * persistence context, and replays the winner's ticket.
      *
-     * @param requestedBy human-readable actor recorded on audit columns;
-     *        may be null for system-driven creation
+     * @param requestedBy human-readable actor recorded on audit columns
+     *        (the authenticated principal's email)
      * @param serializer renders the creation response body; invoked inside
      *        the transaction so lazy associations are available. The
      *        serialized body is stored on the idempotency row and returned
@@ -198,16 +200,20 @@ public class WorkOrderService {
      * Persists a history row, maintains lifecycle timestamps and ON_HOLD
      * pause accounting, and publishes {@link WorkOrderStatusChangedEvent}.
      *
-     * @param changedById the acting user, or null for system-driven transitions
+     * <p>Ownership is enforced here, in the service layer — annotations
+     * alone are not enough: a TECHNICIAN may only transition tickets
+     * assigned to them, and a REQUESTER only their own tickets.
+     *
+     * @param actor the authenticated user performing the transition
      */
     @Transactional
     public WorkOrder transitionStatus(
-            UUID workOrderId, WorkOrderStatus target, UUID changedById, String note) {
+            UUID workOrderId, WorkOrderStatus target, CurrentUser actor, String note) {
         WorkOrder workOrder = loadWorkOrder(workOrderId);
-        User changedBy = changedById == null
-                ? null
-                : users.findById(changedById)
-                        .orElseThrow(() -> new ResourceNotFoundException("User", changedById));
+        checkTicketAccess(workOrder, actor);
+        User changedBy = users
+                .findById(actor.id())
+                .orElseThrow(() -> new ResourceNotFoundException("User", actor.id()));
         return applyTransition(workOrder, target, changedBy, note);
     }
 
@@ -216,21 +222,22 @@ public class WorkOrderService {
      * an already-ASSIGNED ticket is allowed explicitly: it records a
      * history row but is not a state-machine transition (the machine has
      * no self-transitions) and publishes no status-changed event.
+     *
+     * @param actor the authenticated dispatcher/admin performing the assignment
      */
     @Transactional
-    public WorkOrder assignTicket(UUID workOrderId, UUID technicianId, UUID assignedById) {
+    public WorkOrder assignTicket(UUID workOrderId, UUID technicianId, CurrentUser actor) {
         WorkOrder workOrder = loadWorkOrder(workOrderId);
         User technician = users
                 .findById(technicianId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", technicianId));
-        User assignedBy = assignedById == null
-                ? null
-                : users.findById(assignedById)
-                        .orElseThrow(() -> new ResourceNotFoundException("User", assignedById));
+        User assignedBy = users
+                .findById(actor.id())
+                .orElseThrow(() -> new ResourceNotFoundException("User", actor.id()));
 
         WorkOrderStatus from = workOrder.getStatus();
         workOrder.setAssignee(technician);
-        workOrder.setUpdatedBy(assignedBy == null ? "system" : assignedBy.getUsername());
+        workOrder.setUpdatedBy(assignedBy.getUsername());
 
         if (from == WorkOrderStatus.ASSIGNED) {
             recordHistory(
@@ -247,14 +254,21 @@ public class WorkOrderService {
     // ------------------------------------------------------------------
 
     @Transactional(readOnly = true)
-    public WorkOrder getById(UUID workOrderId) {
-        return loadWorkOrder(workOrderId);
+    public WorkOrder getById(UUID workOrderId, CurrentUser actor) {
+        WorkOrder workOrder = loadWorkOrder(workOrderId);
+        checkTicketAccess(workOrder, actor);
+        return workOrder;
     }
 
     /**
      * Paged ticket search for the queue endpoint. All filters are
      * optional; the page size is clamped to {@value #MAX_PAGE_SIZE} so a
      * client cannot request an unbounded page.
+     *
+     * @param requesterId when non-null, only tickets requested by that
+     *        user are returned — the controller forces this to the
+     *        principal for REQUESTER roles (and honors {@code mine=true}
+     *        for everyone else)
      */
     @Transactional(readOnly = true)
     public Page<WorkOrder> search(
@@ -262,20 +276,23 @@ public class WorkOrderService {
             WorkOrderPriority priority,
             UUID teamId,
             UUID assigneeId,
+            UUID requesterId,
             Pageable pageable) {
         Pageable bounded = pageable.getPageSize() > MAX_PAGE_SIZE
                 ? PageRequest.of(pageable.getPageNumber(), MAX_PAGE_SIZE, pageable.getSort())
                 : pageable;
-        return workOrders.search(status, priority, teamId, assigneeId, bounded);
+        return workOrders.search(status, priority, teamId, assigneeId, requesterId, bounded);
     }
 
     /**
      * Full status history of a ticket, oldest first. Loads the ticket
-     * first so an unknown id yields 404 rather than an empty list.
+     * first so an unknown id yields 404 rather than an empty list, and
+     * enforces the same visibility rule as {@link #getById}.
      */
     @Transactional(readOnly = true)
-    public List<WorkOrderStatusHistory> getHistory(UUID workOrderId) {
-        loadWorkOrder(workOrderId);
+    public List<WorkOrderStatusHistory> getHistory(UUID workOrderId, CurrentUser actor) {
+        WorkOrder workOrder = loadWorkOrder(workOrderId);
+        checkTicketAccess(workOrder, actor);
         return history.findByWorkOrderIdOrderByChangedAtAsc(workOrderId);
     }
 
@@ -284,27 +301,29 @@ public class WorkOrderService {
     // ------------------------------------------------------------------
 
     /**
-     * Appends a comment to a ticket's thread.
+     * Appends a comment to a ticket's thread. The author is always the
+     * authenticated principal — the request carries no author id.
      *
-     * @param authorId the comment's author (explicit until Phase 5
-     *        resolves the principal from authentication)
-     * @param requestedBy human-readable actor recorded on audit columns;
-     *        may be null for system-driven comments
+     * <p>Ownership is enforced here: a TECHNICIAN may only comment on
+     * tickets assigned to them, a REQUESTER only on their own tickets.
+     *
+     * @param actor the authenticated user writing the comment; their
+     *        email is recorded on the audit columns
      */
     @Transactional
-    public Comment addComment(
-            UUID workOrderId, UUID authorId, String body, boolean internal, String requestedBy) {
+    public Comment addComment(UUID workOrderId, String body, boolean internal, CurrentUser actor) {
         WorkOrder workOrder = loadWorkOrder(workOrderId);
+        checkTicketAccess(workOrder, actor);
         User author = users
-                .findById(authorId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", authorId));
+                .findById(actor.id())
+                .orElseThrow(() -> new ResourceNotFoundException("User", actor.id()));
         Comment comment = new Comment();
         comment.setWorkOrder(workOrder);
         comment.setAuthor(author);
         comment.setBody(body);
         comment.setInternal(internal);
-        comment.setCreatedBy(requestedBy);
-        comment.setUpdatedBy(requestedBy);
+        comment.setCreatedBy(actor.email());
+        comment.setUpdatedBy(actor.email());
         return comments.save(comment);
     }
 
@@ -360,6 +379,38 @@ public class WorkOrderService {
         return workOrders
                 .findById(workOrderId)
                 .orElseThrow(() -> new ResourceNotFoundException("WorkOrder", workOrderId));
+    }
+
+    /**
+     * Service-layer ownership check — the last line of defense behind
+     * the controller's {@code @PreAuthorize} role gates:
+     * <ul>
+     *   <li>ADMIN and DISPATCHER may act on any ticket;</li>
+     *   <li>TECHNICIAN only on tickets assigned to them;</li>
+     *   <li>REQUESTER only on tickets they requested.</li>
+     * </ul>
+     *
+     * @throws AccessDeniedException when the actor may not touch this ticket
+     */
+    private void checkTicketAccess(WorkOrder workOrder, CurrentUser actor) {
+        switch (actor.role()) {
+            case ADMIN, DISPATCHER -> {
+                // No ownership restriction.
+            }
+            case TECHNICIAN -> {
+                User assignee = workOrder.getAssignee();
+                if (assignee == null || !assignee.getId().equals(actor.id())) {
+                    throw new AccessDeniedException(
+                            "Ticket " + workOrder.getTicketNumber() + " is not assigned to you");
+                }
+            }
+            case REQUESTER -> {
+                if (!workOrder.getRequester().getId().equals(actor.id())) {
+                    throw new AccessDeniedException(
+                            "You can only access tickets you requested");
+                }
+            }
+        }
     }
 
     /**

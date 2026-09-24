@@ -1,5 +1,6 @@
 package com.fieldwork.ops.sla;
 
+import com.fieldwork.ops.common.security.SecurityUtils;
 import com.fieldwork.ops.sla.dto.BreachResponse;
 import com.fieldwork.ops.sla.dto.SlaPolicyRequest;
 import com.fieldwork.ops.sla.dto.SlaPolicyResponse;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,13 +36,14 @@ public class SlaController {
     private final SlaMapper mapper;
 
     @GetMapping("/policies")
+    @PreAuthorize("isAuthenticated()")
     public List<SlaPolicyResponse> listPolicies() {
         return slaService.listPolicies().stream().map(mapper::toResponse).toList();
     }
 
-    // TODO(Phase 5): admin-only — add @PreAuthorize("hasRole('ADMIN')") once
-    // method security is wired up.
+    /** SLA policy writes are admin-only. */
     @PostMapping("/policies")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<SlaPolicyResponse> createPolicy(@Valid @RequestBody SlaPolicyRequest request) {
         SlaPolicy policy = slaService.createPolicy(
                 request.name(),
@@ -49,13 +52,13 @@ public class SlaController {
                 request.responseMinutes(),
                 request.resolutionMinutes(),
                 request.active() == null || request.active(),
-                null);
+                SecurityUtils.requireCurrentUser().email());
         return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toResponse(policy));
     }
 
-    // TODO(Phase 5): admin-only — add @PreAuthorize("hasRole('ADMIN')") once
-    // method security is wired up.
+    /** SLA policy writes are admin-only. */
     @PutMapping("/policies/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public SlaPolicyResponse updatePolicy(
             @PathVariable UUID id, @Valid @RequestBody SlaPolicyRequest request) {
         return mapper.toResponse(slaService.updatePolicy(
@@ -66,7 +69,7 @@ public class SlaController {
                 request.responseMinutes(),
                 request.resolutionMinutes(),
                 request.active(),
-                null));
+                SecurityUtils.requireCurrentUser().email()));
     }
 
     /**
@@ -75,6 +78,7 @@ public class SlaController {
      * recorded breach, newest first.
      */
     @GetMapping("/breaches")
+    @PreAuthorize("isAuthenticated()")
     public List<BreachResponse> listBreaches(
             @RequestParam(required = false)
                     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)

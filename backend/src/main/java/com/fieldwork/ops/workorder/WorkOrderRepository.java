@@ -23,12 +23,14 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, UUID> {
               and (:priority is null or w.priority = :priority)
               and (:teamId is null or w.team.id = :teamId)
               and (:assigneeId is null or w.assignee.id = :assigneeId)
+              and (:requesterId is null or w.requester.id = :requesterId)
             """)
     Page<WorkOrder> search(
             @Param("status") WorkOrderStatus status,
             @Param("priority") WorkOrderPriority priority,
             @Param("teamId") UUID teamId,
             @Param("assigneeId") UUID assigneeId,
+            @Param("requesterId") UUID requesterId,
             Pageable pageable);
 
     /** Dashboard aggregation: ticket counts per lifecycle state. */

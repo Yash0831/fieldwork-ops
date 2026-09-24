@@ -1,9 +1,12 @@
 package com.fieldwork.ops.dispatch;
 
+import com.fieldwork.ops.auth.RoleName;
 import com.fieldwork.ops.auth.User;
 import com.fieldwork.ops.auth.UserRepository;
 import com.fieldwork.ops.common.exception.ResourceNotFoundException;
+import com.fieldwork.ops.common.exception.UserNotAssignableException;
 import com.fieldwork.ops.common.exception.WorkloadLimitExceededException;
+import com.fieldwork.ops.common.security.CurrentUser;
 import com.fieldwork.ops.workorder.WorkOrder;
 import com.fieldwork.ops.workorder.WorkOrderRepository;
 import com.fieldwork.ops.workorder.WorkOrderService;
@@ -47,16 +50,30 @@ public class DispatchService {
     /**
      * Assigns {@code workOrderId} to {@code technicianId}.
      *
-     * @param assignedById the dispatcher performing the assignment, or null for system dispatch
+     * <p>The assignee must be an <em>active</em> user with the
+     * TECHNICIAN role — dispatching to a deactivated account or a
+     * non-technician is rejected with 422.
+     *
+     * @param actor the authenticated dispatcher/admin performing the assignment
+     * @throws UserNotAssignableException when the assignee is deactivated
+     *         or does not carry the TECHNICIAN role
      * @throws WorkloadLimitExceededException when the technician already holds
      *         {@code dispatch.max-open-tickets-per-technician} OPEN/IN_PROGRESS tickets
      * @throws jakarta.persistence.OptimisticLockException on a concurrent assignment race
      */
     @Transactional
-    public WorkOrder assign(UUID technicianId, UUID workOrderId, UUID assignedById) {
+    public WorkOrder assign(UUID technicianId, UUID workOrderId, CurrentUser actor) {
         User technician = users
                 .findById(technicianId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", technicianId));
+        if (!technician.isActive()) {
+            throw new UserNotAssignableException(
+                    "User " + technician.getUsername() + " is deactivated and cannot take tickets");
+        }
+        if (technician.getRole().getName() != RoleName.TECHNICIAN) {
+            throw new UserNotAssignableException(
+                    "User " + technician.getUsername() + " does not have the TECHNICIAN role");
+        }
 
         long currentLoad = workOrders.countByAssigneeIdAndStatusIn(technicianId, ACTIVE_STATES);
         int limit = properties.getMaxOpenTicketsPerTechnician();
@@ -70,6 +87,6 @@ public class DispatchService {
                 technician.getUsername(),
                 currentLoad,
                 limit);
-        return workOrderService.assignTicket(workOrderId, technicianId, assignedById);
+        return workOrderService.assignTicket(workOrderId, technicianId, actor);
     }
 }

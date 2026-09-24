@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fieldwork.ops.common.exception.IdempotencyConflictException;
 import com.fieldwork.ops.common.exception.IllegalStateTransitionException;
 import com.fieldwork.ops.common.exception.ResourceNotFoundException;
+import com.fieldwork.ops.common.exception.UserNotAssignableException;
 import com.fieldwork.ops.common.exception.WorkloadLimitExceededException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,6 +19,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -67,10 +70,40 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), request, List.of());
     }
 
+    @ExceptionHandler(UserNotAssignableException.class)
+    public ResponseEntity<ErrorResponse> handleUserNotAssignable(
+            UserNotAssignableException ex, HttpServletRequest request) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), request, List.of());
+    }
+
     @ExceptionHandler(IdempotencyConflictException.class)
     public ResponseEntity<ErrorResponse> handleIdempotencyConflict(
             IdempotencyConflictException ex, HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request, List.of());
+    }
+
+    // ------------------------------------------------------------------
+    // Authentication / authorization (Phase 5)
+    // ------------------------------------------------------------------
+
+    /**
+     * Bad credentials, invalid/expired refresh tokens, deactivated
+     * accounts. The message never reveals which credential failed.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthentication(
+            AuthenticationException ex, HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), request, List.of());
+    }
+
+    /**
+     * Authenticated but forbidden — a failed {@code @PreAuthorize} role
+     * gate or a service-layer ownership check.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(
+            AccessDeniedException ex, HttpServletRequest request) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage(), request, List.of());
     }
 
     // ------------------------------------------------------------------
