@@ -1,0 +1,74 @@
+server:
+  port: 8080
+  # Fail fast on ambiguous trailing-slash mappings; keeps the API surface predictable.
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: fieldwork-ops
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:fieldwork}
+    username: ${DB_USER:fieldwork}
+    password: ${DB_PASSWORD:changeme}
+    hikari:
+      # Modest pool for a single-instance service; tune when scaling out.
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  jpa:
+    # Flyway owns the schema. `validate` makes the app refuse to boot if the
+    # entities drift from the migrations — schema changes go through Flyway,
+    # never through Hibernate auto-DDL.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        # All timestamps are stored in UTC; conversion happens at the edges.
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  # JSON everywhere, including actuator output. Keeps log aggregation simple.
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: fieldwork-ops
+    description: Field Service Work-Order & SLA Management Platform
+
+logging:
+  level:
+    com.fieldwork.ops: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO
+  # Console JSON layout is configured in logback-spring.xml (Phase 9).
+  # Until then, the correlation ID is available on the MDC under
+  # `correlationId` and included in the default pattern via that file.
