@@ -1,7 +1,6 @@
 package com.fieldwork.ops.workorder;
 
-import java.util.Collection;
-import java.util.List;
+import java.util.Collection;import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -54,6 +53,27 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, UUID> {
 
     /** Dashboard aggregation: ticket counts per lifecycle state. */
     long countByStatus(WorkOrderStatus status);
+
+    /** Dashboard aggregation: OPEN tickets per priority. */
+    long countByStatusAndPriority(WorkOrderStatus status, WorkOrderPriority priority);
+
+    /**
+     * Per-technician load of active tickets. Groups by the assignee's
+     * identity columns (to-one associations — no row duplication) so the
+     * dashboard can render a load table without N+1 queries.
+     */
+    @Query(
+            """
+            select w.assignee.id as id,
+                   w.assignee.username as username,
+                   w.assignee.fullName as fullName,
+                   count(w) as ticketLoad
+            from WorkOrder w
+            where w.status in :statuses and w.assignee is not null
+            group by w.assignee.id, w.assignee.username, w.assignee.fullName
+            order by count(w) desc
+            """)
+    List<TechnicianLoad> loadByTechnician(@Param("statuses") List<WorkOrderStatus> statuses);
 
     /** Unassigned OPEN tickets — the dispatch queue depth. */
     long countByStatusAndAssigneeIsNull(WorkOrderStatus status);

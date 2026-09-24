@@ -403,6 +403,20 @@ public class WorkOrderService {
         return mapper.toCommentResponse(addComment(workOrderId, body, internal, actor));
     }
 
+    /**
+     * Comment thread of a ticket, oldest first, mapped inside the
+     * transaction. Same visibility rule as {@link #getById}; authors
+     * are fetch-joined in the query.
+     */
+    @Transactional(readOnly = true)
+    public List<CommentResponse> getCommentResponses(UUID workOrderId, CurrentUser actor) {
+        WorkOrder workOrder = loadWorkOrder(workOrderId);
+        checkTicketAccess(workOrder, actor);
+        return comments.findByWorkOrderIdWithAuthor(workOrderId).stream()
+                .map(mapper::toCommentResponse)
+                .toList();
+    }
+
     // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------

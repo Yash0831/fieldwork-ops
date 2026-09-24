@@ -176,6 +176,12 @@ public class WorkOrderController {
         return workOrderService.getHistoryResponses(id, SecurityUtils.requireCurrentUser());
     }
 
+    @GetMapping("/{id}/comments")
+    @PreAuthorize("isAuthenticated()")
+    public List<CommentResponse> comments(@PathVariable UUID id) {
+        return workOrderService.getCommentResponses(id, SecurityUtils.requireCurrentUser());
+    }
+
     /**
      * Renders the creation response inside the service transaction, so
      * the bytes stored on the idempotency row match the live 201 body

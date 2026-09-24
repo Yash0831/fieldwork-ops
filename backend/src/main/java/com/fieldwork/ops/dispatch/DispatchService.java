@@ -7,6 +7,7 @@ import com.fieldwork.ops.common.exception.ResourceNotFoundException;
 import com.fieldwork.ops.common.exception.UserNotAssignableException;
 import com.fieldwork.ops.common.exception.WorkloadLimitExceededException;
 import com.fieldwork.ops.common.security.CurrentUser;
+import com.fieldwork.ops.dispatch.dto.TechnicianResponse;
 import com.fieldwork.ops.workorder.WorkOrder;
 import com.fieldwork.ops.workorder.WorkOrderMapper;
 import com.fieldwork.ops.workorder.WorkOrderRepository;
@@ -14,7 +15,9 @@ import com.fieldwork.ops.workorder.WorkOrderService;
 import com.fieldwork.ops.workorder.WorkOrderStatus;
 import com.fieldwork.ops.workorder.dto.WorkOrderResponse;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -101,5 +104,27 @@ public class DispatchService {
     @Transactional
     public WorkOrderResponse assignResponse(UUID technicianId, UUID workOrderId, CurrentUser actor) {
         return workOrderMapper.toResponse(assign(technicianId, workOrderId, actor));
+    }
+
+    /**
+     * Dispatcher technician directory: every active technician with
+     * their team and current OPEN/IN_PROGRESS load. Read inside one
+     * transaction so the lazy team association never escapes it.
+     */
+    @Transactional(readOnly = true)
+    public List<TechnicianResponse> listTechnicians() {
+        Map<UUID, Long> loadByTechnician = workOrders
+                .loadByTechnician(ACTIVE_STATES)
+                .stream()
+                .collect(Collectors.toMap(
+                        t -> t.getId(), t -> t.getTicketLoad(), (a, b) -> a));
+        return users.findActiveByRoleName(RoleName.TECHNICIAN).stream()
+                .map(u -> new TechnicianResponse(
+                        u.getId(),
+                        u.getUsername(),
+                        u.getFullName(),
+                        u.getTeam() != null ? u.getTeam().getName() : null,
+                        loadByTechnician.getOrDefault(u.getId(), 0L)))
+                .toList();
     }
 }
