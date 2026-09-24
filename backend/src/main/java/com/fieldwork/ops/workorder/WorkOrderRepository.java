@@ -43,6 +43,9 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, UUID> {
 
     List<WorkOrder> findByStatus(WorkOrderStatus status);
 
+    /** SLA breach scanner: all tickets in non-terminal states. */
+    List<WorkOrder> findByStatusIn(Collection<WorkOrderStatus> statuses);
+
     List<WorkOrder> findByAssigneeIdAndStatus(UUID assigneeId, WorkOrderStatus status);
 
     /** Workload accounting for the dispatch rule: active tickets held by a technician. */

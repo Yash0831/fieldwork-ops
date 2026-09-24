@@ -56,6 +56,16 @@ public class Notification {
     @Column(name = "event_type", nullable = false, length = 64)
     private String eventType;
 
+    /**
+     * Idempotency key for the Phase 6 event listeners:
+     * {@code <eventType>:<workOrderId>:<recipientId>}. Unique (V9), so a
+     * redelivered domain event can never create a second notification
+     * row. Nullable so rows not born from a domain event aren't subject
+     * to dedupe.
+     */
+    @Column(name = "dedupe_key")
+    private String dedupeKey;
+
     @Column(name = "subject")
     private String subject;
 

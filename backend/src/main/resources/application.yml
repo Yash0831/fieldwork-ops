@@ -94,3 +94,23 @@ logging:
   # Console JSON layout is configured in logback-spring.xml (Phase 9).
   # Until then, the correlation ID is available on the MDC under
   # `correlationId` and included in the default pattern via that file.
+
+# Phase 6 async/event processing. All values have built-in defaults and
+# can be overridden via environment variables (Spring relaxed binding):
+# SLA_SCAN_CRON, NOTIFICATION_RETRY_FIXED_DELAY,
+# NOTIFICATION_RETRY_MAX_ATTEMPTS, NOTIFICATION_RETRY_BATCH_SIZE.
+sla:
+  scan:
+    # Cron for the SLA breach-scan job (Spring 6-field format, seconds
+    # first). Default: every 5 minutes.
+    cron: "0 */5 * * * *"
+
+notification:
+  retry:
+    # Poll interval for the notification retry worker, in milliseconds.
+    fixed-delay: 60000
+    # Delivery attempts stamped onto each new notification before the
+    # worker parks it in DEAD_LETTER.
+    max-attempts: 5
+    # Max due notifications processed in a single worker run.
+    batch-size: 100
