@@ -1,0 +1,59 @@
+# Render blueprint for the fieldwork-ops live demo API.
+#
+# Usage: Render dashboard -> New -> Blueprint -> connect the
+# Yash0831/fieldwork-ops repo. Render reads this file and creates the
+# web service; fill in the `sync: false` values in the dashboard.
+#
+# The database is NOT created here on purpose: the demo uses Neon
+# (free serverless Postgres) so the data survives Render's free-tier
+# limits. Create the Neon database first — see docs/deployment-live.md.
+
+services:
+  - type: web
+    name: fieldwork-ops-api
+    runtime: docker
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /actuator/health
+    envVars:
+      # --- Database (Neon). Copy each part from the Neon dashboard. ---
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 5432
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      # Neon requires SSL.
+      - key: DB_URL_PARAMS
+        value: ?sslmode=require
+
+      # --- Security. Generate with: openssl rand -base64 48 ---
+      - key: JWT_SECRET
+        sync: false
+
+      # --- CORS. Set to the deployed frontend origin, e.g.
+      # https://fieldwork-ops.vercel.app (no trailing slash). ---
+      - key: APP_CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # --- Attachments (optional). Leave the defaults empty to run
+      # without object storage; attachment uploads will fail with a
+      # clear error but everything else works. For working uploads,
+      # point these at Cloudflare R2 (S3-compatible) — see
+      # docs/deployment-live.md. ---
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false

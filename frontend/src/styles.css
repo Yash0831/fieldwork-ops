@@ -553,3 +553,17 @@ h2 {
   border-bottom: none;
   padding-bottom: 0;
 }
+
+/* Demo account quick-fill on the login page (public demo convenience). */
+.demo-accounts {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.demo-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}

@@ -1,5 +1,6 @@
 server:
-  port: 8080
+  # Render and most PaaS hosts inject $PORT; default keeps local dev on 8080.
+  port: ${PORT:8080}
   # Fail fast on ambiguous trailing-slash mappings; keeps the API surface predictable.
   servlet:
     encoding:
@@ -21,7 +22,9 @@ spring:
       max-request-size: 12MB
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:fieldwork}
+    # DB_URL_PARAMS lets hosted Postgres (e.g. Neon) require SSL without
+    # code changes: set DB_URL_PARAMS=?sslmode=require in that environment.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:fieldwork}${DB_URL_PARAMS:}
     username: ${DB_USER:fieldwork}
     password: ${DB_PASSWORD:changeme}
     hikari:

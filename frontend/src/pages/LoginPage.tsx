@@ -34,6 +34,12 @@ export default function LoginPage() {
     }
   };
 
+  const fillDemo = (email: string) => {
+    setEmail(email);
+    setPassword('password123');
+    setError(null);
+  };
+
   return (
     <div className="login-wrap">
       <form className="card login-card" onSubmit={handleSubmit}>
@@ -69,6 +75,32 @@ export default function LoginPage() {
         <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
+        <div className="demo-accounts">
+          <p className="muted small centered">Try a demo account (password is filled for you):</p>
+          <div className="demo-buttons">
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => fillDemo('marcus.webb@meridian.example')}
+            >
+              Dispatcher
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => fillDemo('elena.ruiz@meridian.example')}
+            >
+              Technician
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => fillDemo('sofia.lindqvist@meridian.example')}
+            >
+              Requester
+            </button>
+          </div>
+        </div>
         <p className="muted small centered">
           Contact your administrator if you need an account.
         </p>

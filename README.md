@@ -9,10 +9,25 @@ console for dispatchers, technicians, and requesters.
 **Status: complete portfolio project.** This is an independently built
 engineering project to demonstrate backend system design: transactional
 workflows, concurrency control, idempotent APIs, scheduled background
-processing, and operational hygiene. It is not affiliated with any employer,
-**not deployed anywhere, and has never carried production traffic.** All
+processing, and operational hygiene. It is not affiliated with any employer
+and has never carried production traffic. All
 demo data (the "Meridian Facilities Group" company, people, and logins) is
 fictional.
+
+## Live demo
+
+A public demo runs on free tiers (Neon Postgres + Render API + Vercel
+frontend):
+
+- **App:** `https://fieldwork-ops.vercel.app` _(replace with your Vercel URL after deploying)_
+- **API health:** `https://fieldwork-ops-api.onrender.com/actuator/health` _(replace with your Render URL)_
+
+On the login page, click **Dispatcher**, **Technician**, or **Requester**
+to fill in a demo account automatically (all demo passwords are
+`password123`). Note: Render's free tier sleeps after 15 minutes idle, so
+the first request after a pause takes ~60 seconds.
+
+To deploy your own copy, follow [docs/deployment-live.md](docs/deployment-live.md).
 
 ## Features
 
