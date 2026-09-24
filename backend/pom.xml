@@ -109,6 +109,26 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Integration tests: real PostgreSQL via Testcontainers.
+             Versions are managed by spring-boot-dependencies. These only
+             run under `mvn verify` (failsafe); the default `mvn test`
+             run excludes them (see surefire config below) because they
+             need a Docker daemon. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -124,6 +144,38 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <!-- Unit tests: everything except the Docker-backed integration
+                 tests (naming convention *IntegrationTest), which need a
+                 Docker daemon and run under failsafe instead. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>**/*IntegrationTest.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <!-- Integration tests: *IntegrationTest against Testcontainers
+                 PostgreSQL. Runs under `mvn verify`; skipped when Docker
+                 is unavailable. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/*IntegrationTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
