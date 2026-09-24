@@ -8,6 +8,11 @@ import com.fieldwork.ops.common.exception.IdempotencyConflictException;
 import com.fieldwork.ops.common.exception.ResourceNotFoundException;
 import com.fieldwork.ops.common.security.CurrentUser;
 import com.fieldwork.ops.sla.SlaService;
+import com.fieldwork.ops.workorder.dto.AttachmentResponse;
+import com.fieldwork.ops.workorder.dto.CommentResponse;
+import com.fieldwork.ops.workorder.dto.StatusHistoryResponse;
+import com.fieldwork.ops.workorder.dto.WorkOrderListResponse;
+import com.fieldwork.ops.workorder.dto.WorkOrderResponse;
 import com.fieldwork.ops.workorder.event.WorkOrderCreatedEvent;
 import com.fieldwork.ops.workorder.event.WorkOrderStatusChangedEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -22,6 +27,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -65,6 +71,7 @@ public class WorkOrderService {
     private final ApplicationEventPublisher events;
     private final Clock clock;
     private final EntityManager entityManager;
+    private final WorkOrderMapper mapper;
 
     // ------------------------------------------------------------------
     // Creation (idempotent)
@@ -285,15 +292,74 @@ public class WorkOrderService {
     }
 
     /**
-     * Full status history of a ticket, oldest first. Loads the ticket
-     * first so an unknown id yields 404 rather than an empty list, and
-     * enforces the same visibility rule as {@link #getById}.
+     * Paged queue search mapped to the list response <em>inside</em> the
+     * transaction. The query fetch-joins the to-one associations, and the
+     * mapping happens before the persistence context closes — mapping
+     * outside the transaction would throw {@code LazyInitializationException}
+     * on the lazy {@code requester}/{@code assignee}/{@code team} proxies.
+     */
+    @Transactional(readOnly = true)
+    public WorkOrderListResponse searchResponses(
+            WorkOrderStatus status,
+            WorkOrderPriority priority,
+            UUID teamId,
+            UUID assigneeId,
+            UUID requesterId,
+            Pageable pageable) {
+        return mapper.toListResponse(search(status, priority, teamId, assigneeId, requesterId, pageable));
+    }
+
+    /**
+     * Full ticket detail mapped inside the transaction, for the same
+     * lazy-loading reason as {@link #searchResponses}. The attachment
+     * supplier is invoked here (it runs in its own service transaction,
+     * which simply joins this one) so the controller never touches
+     * managed entities.
+     */
+    @Transactional(readOnly = true)
+    public WorkOrderResponse getDetail(
+            UUID workOrderId, CurrentUser actor, Supplier<List<AttachmentResponse>> attachments) {
+        WorkOrder workOrder = getById(workOrderId, actor);
+        return mapper.toResponse(workOrder, attachments.get());
+    }
+
+    /**
+     * Guarded status transition mapped to the response inside the same
+     * write transaction — the response must be rendered while the lazy
+     * associations are still attached.
+     */
+    @Transactional
+    public WorkOrderResponse transitionStatusResponse(
+            UUID workOrderId, WorkOrderStatus target, CurrentUser actor, String note) {
+        return mapper.toResponse(transitionStatus(workOrderId, target, actor, note));
+    }
+
+    /**
+     * Full status history of a ticket, oldest first, mapped to response
+     * DTOs inside the transaction. Loads the ticket first so an unknown
+     * id yields 404 rather than an empty list, and enforces the same
+     * visibility rule as {@link #getById}. The changer is fetch-joined in
+     * the query so no lazy load escapes the transaction.
+     */
+    @Transactional(readOnly = true)
+    public List<StatusHistoryResponse> getHistoryResponses(UUID workOrderId, CurrentUser actor) {
+        WorkOrder workOrder = loadWorkOrder(workOrderId);
+        checkTicketAccess(workOrder, actor);
+        return history.findByWorkOrderIdWithChanger(workOrderId).stream()
+                .map(mapper::toHistoryResponse)
+                .toList();
+    }
+
+    /**
+     * Legacy entity-returning variant kept for internal callers that need
+     * the managed entity (e.g. {@link #getDetail}). Web callers should
+     * prefer {@link #getHistoryResponses}.
      */
     @Transactional(readOnly = true)
     public List<WorkOrderStatusHistory> getHistory(UUID workOrderId, CurrentUser actor) {
         WorkOrder workOrder = loadWorkOrder(workOrderId);
         checkTicketAccess(workOrder, actor);
-        return history.findByWorkOrderIdOrderByChangedAtAsc(workOrderId);
+        return history.findByWorkOrderIdWithChanger(workOrderId);
     }
 
     // ------------------------------------------------------------------
@@ -325,6 +391,16 @@ public class WorkOrderService {
         comment.setCreatedBy(actor.email());
         comment.setUpdatedBy(actor.email());
         return comments.save(comment);
+    }
+
+    /**
+     * Comment creation mapped to the response inside the same write
+     * transaction, so the lazy {@code author} association is still
+     * attached when the DTO is rendered.
+     */
+    @Transactional
+    public CommentResponse addCommentResponse(UUID workOrderId, String body, boolean internal, CurrentUser actor) {
+        return mapper.toCommentResponse(addComment(workOrderId, body, internal, actor));
     }
 
     // ------------------------------------------------------------------
@@ -383,16 +459,21 @@ public class WorkOrderService {
 
     /**
      * Service-layer ownership check — the last line of defense behind
-     * the controller's {@code @PreAuthorize} role gates:
+     * the controllers' {@code @PreAuthorize} role gates:
      * <ul>
      *   <li>ADMIN and DISPATCHER may act on any ticket;</li>
      *   <li>TECHNICIAN only on tickets assigned to them;</li>
      *   <li>REQUESTER only on tickets they requested.</li>
      * </ul>
      *
+     * <p>Public so other modules can reuse the ticket-access rule — the
+     * attachment module ({@code com.fieldwork.ops.attachment}) calls
+     * this instead of reimplementing ownership, keeping the rule in one
+     * place.
+     *
      * @throws AccessDeniedException when the actor may not touch this ticket
      */
-    private void checkTicketAccess(WorkOrder workOrder, CurrentUser actor) {
+    public void checkTicketAccess(WorkOrder workOrder, CurrentUser actor) {
         switch (actor.role()) {
             case ADMIN, DISPATCHER -> {
                 // No ownership restriction.

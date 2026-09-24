@@ -28,7 +28,11 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Table(name = "attachments")
 @Getter
 @Setter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
+// Public (not protected like the sibling entities): the attachment
+// service that constructs these rows lives in
+// com.fieldwork.ops.attachment, a different package, so the protected
+// JPA no-arg constructor would not be visible to it.
+@NoArgsConstructor(access = AccessLevel.PUBLIC)
 public class Attachment {
 
     @Id

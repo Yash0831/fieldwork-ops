@@ -4,6 +4,7 @@ import com.fieldwork.ops.workorder.WorkOrderPriority;
 import com.fieldwork.ops.workorder.WorkOrderStatus;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -11,6 +12,8 @@ import java.util.UUID;
  * {@code sla} carries the current SLA deadline info (response and
  * resolution targets stamped at creation, the headline {@code dueAt},
  * and whether the SLA clock is currently paused on hold).
+ * {@code attachments} is populated on the ticket-detail endpoint; the
+ * queue and creation responses carry an empty list.
  */
 public record WorkOrderResponse(
         UUID id,
@@ -32,7 +35,8 @@ public record WorkOrderResponse(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         String createdBy,
-        String updatedBy) {
+        String updatedBy,
+        List<AttachmentResponse> attachments) {
 
     public record UserSummary(UUID id, String username, String fullName) {}
 

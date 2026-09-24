@@ -81,6 +81,16 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- S3 object storage for attachments (Phase 7; version pinned
+             explicitly — spring-boot-dependencies does not manage the
+             AWS SDK). The default sync HTTP client (Apache) arrives
+             transitively with this artifact. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.55.4</version>
+        </dependency>
+
         <!-- Boilerplate reduction, compile-time only -->
         <dependency>
             <groupId>org.projectlombok</groupId>

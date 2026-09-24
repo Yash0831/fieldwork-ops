@@ -2,10 +2,12 @@ package com.fieldwork.ops.workorder;
 
 import com.fieldwork.ops.auth.Team;
 import com.fieldwork.ops.auth.User;
+import com.fieldwork.ops.workorder.dto.AttachmentResponse;
 import com.fieldwork.ops.workorder.dto.CommentResponse;
 import com.fieldwork.ops.workorder.dto.StatusHistoryResponse;
 import com.fieldwork.ops.workorder.dto.WorkOrderListResponse;
 import com.fieldwork.ops.workorder.dto.WorkOrderResponse;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +20,16 @@ import org.springframework.stereotype.Component;
 public class WorkOrderMapper {
 
     public WorkOrderResponse toResponse(WorkOrder workOrder) {
+        return toResponse(workOrder, List.of());
+    }
+
+    /**
+     * Full ticket mapping including the attachment list. The caller
+     * supplies the attachments as DTOs (fetched and mapped inside a
+     * service transaction) so this mapper never touches the database —
+     * only the ticket-detail endpoint passes a non-empty list.
+     */
+    public WorkOrderResponse toResponse(WorkOrder workOrder, List<AttachmentResponse> attachments) {
         return new WorkOrderResponse(
                 workOrder.getId(),
                 workOrder.getTicketNumber(),
@@ -43,7 +55,8 @@ public class WorkOrderMapper {
                 workOrder.getCreatedAt(),
                 workOrder.getUpdatedAt(),
                 workOrder.getCreatedBy(),
-                workOrder.getUpdatedBy());
+                workOrder.getUpdatedBy(),
+                List.copyOf(attachments));
     }
 
     public WorkOrderListResponse toListResponse(Page<WorkOrder> page) {

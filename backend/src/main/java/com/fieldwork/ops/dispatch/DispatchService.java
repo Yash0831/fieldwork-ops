@@ -8,9 +8,11 @@ import com.fieldwork.ops.common.exception.UserNotAssignableException;
 import com.fieldwork.ops.common.exception.WorkloadLimitExceededException;
 import com.fieldwork.ops.common.security.CurrentUser;
 import com.fieldwork.ops.workorder.WorkOrder;
+import com.fieldwork.ops.workorder.WorkOrderMapper;
 import com.fieldwork.ops.workorder.WorkOrderRepository;
 import com.fieldwork.ops.workorder.WorkOrderService;
 import com.fieldwork.ops.workorder.WorkOrderStatus;
+import com.fieldwork.ops.workorder.dto.WorkOrderResponse;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,7 @@ public class DispatchService {
     private final WorkOrderRepository workOrders;
     private final UserRepository users;
     private final WorkOrderService workOrderService;
+    private final WorkOrderMapper workOrderMapper;
     private final DispatchProperties properties;
 
     /**
@@ -88,5 +91,15 @@ public class DispatchService {
                 currentLoad,
                 limit);
         return workOrderService.assignTicket(workOrderId, technicianId, actor);
+    }
+
+    /**
+     * Assignment mapped to the response inside the same write
+     * transaction, so the lazy associations are still attached when the
+     * DTO is rendered.
+     */
+    @Transactional
+    public WorkOrderResponse assignResponse(UUID technicianId, UUID workOrderId, CurrentUser actor) {
+        return workOrderMapper.toResponse(assign(technicianId, workOrderId, actor));
     }
 }

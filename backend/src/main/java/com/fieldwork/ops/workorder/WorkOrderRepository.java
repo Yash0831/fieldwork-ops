@@ -15,16 +15,35 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, UUID> {
     /**
      * Filtered queue search for the list endpoint. Every filter is
      * optional — a null parameter disables that predicate.
+     *
+     * <p>The {@code requester}/{@code assignee}/{@code team} associations
+     * are fetch-joined so the web layer can map them to DTOs without
+     * triggering lazy loads after the transaction closes. They are
+     * to-one associations, so the fetch join cannot duplicate rows; the
+     * explicit count query mirrors the predicates without the joins.
      */
     @Query(
-            """
-            select w from WorkOrder w
-            where (:status is null or w.status = :status)
-              and (:priority is null or w.priority = :priority)
-              and (:teamId is null or w.team.id = :teamId)
-              and (:assigneeId is null or w.assignee.id = :assigneeId)
-              and (:requesterId is null or w.requester.id = :requesterId)
-            """)
+            value =
+                    """
+                    select w from WorkOrder w
+                    left join fetch w.requester
+                    left join fetch w.assignee
+                    left join fetch w.team
+                    where (:status is null or w.status = :status)
+                      and (:priority is null or w.priority = :priority)
+                      and (:teamId is null or w.team.id = :teamId)
+                      and (:assigneeId is null or w.assignee.id = :assigneeId)
+                      and (:requesterId is null or w.requester.id = :requesterId)
+                    """,
+            countQuery =
+                    """
+                    select count(w) from WorkOrder w
+                    where (:status is null or w.status = :status)
+                      and (:priority is null or w.priority = :priority)
+                      and (:teamId is null or w.team.id = :teamId)
+                      and (:assigneeId is null or w.assignee.id = :assigneeId)
+                      and (:requesterId is null or w.requester.id = :requesterId)
+                    """)
     Page<WorkOrder> search(
             @Param("status") WorkOrderStatus status,
             @Param("priority") WorkOrderPriority priority,

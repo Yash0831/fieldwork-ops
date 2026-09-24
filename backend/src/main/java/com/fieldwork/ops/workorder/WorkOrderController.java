@@ -2,6 +2,7 @@ package com.fieldwork.ops.workorder;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fieldwork.ops.attachment.AttachmentService;
 import com.fieldwork.ops.auth.RoleName;
 import com.fieldwork.ops.common.security.CurrentUser;
 import com.fieldwork.ops.common.security.SecurityUtils;
@@ -47,8 +48,10 @@ import org.springframework.web.bind.annotation.RestController;
  * tickets, a requester only their own) — annotations alone cannot
  * express those. The authenticated principal is resolved once per
  * request via {@link SecurityUtils} and passed down as the actor, so
- * no endpoint trusts a client-supplied user id. Attachment endpoints
- * arrive in Phase 7.
+ * no endpoint trusts a client-supplied user id. Attachment
+ * upload/download/delete live in {@code AttachmentController} (the
+ * attachment module); this controller only embeds the attachment
+ * metadata list in the ticket detail.
  */
 @RestController
 @RequestMapping("/api/v1/work-orders")
@@ -57,6 +60,7 @@ public class WorkOrderController {
 
     private final WorkOrderService workOrderService;
     private final DispatchService dispatchService;
+    private final AttachmentService attachmentService;
     private final WorkOrderMapper mapper;
     private final ObjectMapper objectMapper;
 
@@ -117,14 +121,15 @@ public class WorkOrderController {
         if (actor.role() == RoleName.REQUESTER || mine) {
             effectiveRequester = actor.id();
         }
-        return mapper.toListResponse(
-                workOrderService.search(status, priority, teamId, assigneeId, effectiveRequester, pageable));
+        return workOrderService.searchResponses(
+                status, priority, teamId, assigneeId, effectiveRequester, pageable);
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public WorkOrderResponse getById(@PathVariable UUID id) {
-        return mapper.toResponse(workOrderService.getById(id, SecurityUtils.requireCurrentUser()));
+        CurrentUser actor = SecurityUtils.requireCurrentUser();
+        return workOrderService.getDetail(id, actor, () -> attachmentService.listForTicket(id, actor));
     }
 
     /**
@@ -135,8 +140,8 @@ public class WorkOrderController {
     @PreAuthorize("hasAnyRole('TECHNICIAN', 'ADMIN')")
     public WorkOrderResponse transitionStatus(
             @PathVariable UUID id, @Valid @RequestBody StatusTransitionRequest request) {
-        return mapper.toResponse(workOrderService.transitionStatus(
-                id, request.toStatus(), SecurityUtils.requireCurrentUser(), request.note()));
+        return workOrderService.transitionStatusResponse(
+                id, request.toStatus(), SecurityUtils.requireCurrentUser(), request.note());
     }
 
     /**
@@ -147,8 +152,8 @@ public class WorkOrderController {
     @PostMapping("/{id}/assign")
     @PreAuthorize("hasAnyRole('DISPATCHER', 'ADMIN')")
     public WorkOrderResponse assign(@PathVariable UUID id, @Valid @RequestBody AssignRequest request) {
-        return mapper.toResponse(
-                dispatchService.assign(request.technicianId(), id, SecurityUtils.requireCurrentUser()));
+        return dispatchService.assignResponse(
+                request.technicianId(), id, SecurityUtils.requireCurrentUser());
     }
 
     /**
@@ -160,17 +165,15 @@ public class WorkOrderController {
     @PreAuthorize("hasAnyRole('REQUESTER', 'TECHNICIAN', 'ADMIN')")
     public ResponseEntity<CommentResponse> addComment(
             @PathVariable UUID id, @Valid @RequestBody CommentRequest request) {
-        Comment comment = workOrderService.addComment(
-                id, request.body(), request.internal(), SecurityUtils.requireCurrentUser());
-        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toCommentResponse(comment));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(workOrderService.addCommentResponse(
+                        id, request.body(), request.internal(), SecurityUtils.requireCurrentUser()));
     }
 
     @GetMapping("/{id}/history")
     @PreAuthorize("isAuthenticated()")
     public List<StatusHistoryResponse> history(@PathVariable UUID id) {
-        return workOrderService.getHistory(id, SecurityUtils.requireCurrentUser()).stream()
-                .map(mapper::toHistoryResponse)
-                .toList();
+        return workOrderService.getHistoryResponses(id, SecurityUtils.requireCurrentUser());
     }
 
     /**

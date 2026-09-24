@@ -3,6 +3,7 @@ package com.fieldwork.ops.common.web;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fieldwork.ops.common.exception.IdempotencyConflictException;
 import com.fieldwork.ops.common.exception.IllegalStateTransitionException;
+import com.fieldwork.ops.common.exception.InvalidAttachmentException;
 import com.fieldwork.ops.common.exception.ResourceNotFoundException;
 import com.fieldwork.ops.common.exception.UserNotAssignableException;
 import com.fieldwork.ops.common.exception.WorkloadLimitExceededException;
@@ -36,7 +37,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  *   <li>{@code not_found} → 404</li>
  *   <li>{@code illegal_state_transition}, {@code workload_limit_exceeded} → 422</li>
  *   <li>{@code idempotency_conflict}, optimistic-lock races, integrity conflicts → 409</li>
- *   <li>bean validation / malformed input → 400 with {@code fieldErrors}</li>
+ *   <li>{@code invalid_attachment}, bean validation / malformed input → 400 with {@code fieldErrors}</li>
  *   <li>anything unexpected → 500 (logged with stack trace; the client
  *       gets a generic message, never internals)</li>
  * </ul>
@@ -80,6 +81,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIdempotencyConflict(
             IdempotencyConflictException ex, HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request, List.of());
+    }
+
+    /**
+     * Rejected attachment uploads (empty file, disallowed content
+     * type, over the size limit) — the request is at fault, not the
+     * system.
+     */
+    @ExceptionHandler(InvalidAttachmentException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidAttachment(
+            InvalidAttachmentException ex, HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request, List.of());
     }
 
     // ------------------------------------------------------------------

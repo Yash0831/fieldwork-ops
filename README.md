@@ -85,16 +85,23 @@ cp .env.example .env        # adjust DB_PASSWORD for shared machines
 docker compose up --build
 ```
 
-This starts PostgreSQL 15 and the app. The app runs Flyway migrations on
-boot and validates the JPA model against the migrated schema.
+This starts PostgreSQL 15, LocalStack (S3 emulation), and the app.
+The app runs Flyway migrations on boot and validates the JPA model
+against the migrated schema. LocalStack creates the attachments bucket
+(`fieldwork-attachments` by default) via its init hook — no manual
+step needed.
 
 - API: http://localhost:8080
 - Health: http://localhost:8080/actuator/health
 - Metrics: http://localhost:8080/actuator/metrics
+- LocalStack S3: http://localhost:4566
 
 To run the backend outside containers (e.g. from an IDE), start only the
-database (`docker compose up db`), keep `DB_HOST=localhost` in `.env`, and
-run `FieldworkOpsApplication` — it picks up the same variables.
+database and LocalStack (`docker compose up db localstack`), keep
+`DB_HOST=localhost` in `.env`, and run `FieldworkOpsApplication` — it
+picks up the same variables. Note `.env` sets
+`S3_ENDPOINT=http://localhost:4566` for that case; inside compose the
+app is wired to `http://localstack:4566` instead.
 
 To stop and remove containers (data persists in the `fieldwork-pgdata`
 volume):
@@ -116,6 +123,12 @@ for the full list. Nothing secret is committed to the repo.
 | `DB_NAME`     | `fieldwork` | Database name                            |
 | `DB_USER`     | `fieldwork` | Database user                            |
 | `DB_PASSWORD` | `changeme`  | Database password (change for real use)  |
+| `S3_ENDPOINT` | _(empty in compose)_ | S3 endpoint override: LocalStack URL in dev (`http://localstack:4566` inside compose); empty → real AWS S3 |
+| `S3_REGION` | `us-east-1` | S3 region |
+| `S3_BUCKET` | `fieldwork-attachments` | Bucket for ticket attachments (created automatically in LocalStack) |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `test` / `test` | S3 credentials — dev-only defaults; real deployments MUST set real keys |
+| `S3_MAX_FILE_SIZE` | `10485760` | Max attachment size in bytes (10 MiB) |
+| `S3_ALLOWED_CONTENT_TYPES` | `image/jpeg,image/png,application/pdf,text/plain` | Upload content-type allowlist (comma-separated) |
 
 ## Testing
 

@@ -11,6 +11,15 @@ spring:
   application:
     name: fieldwork-ops
 
+  servlet:
+    multipart:
+      # Container ceiling for multipart uploads. Deliberately a little
+      # higher than app.s3.max-file-size so the service's own validation
+      # (400 with a clear message) fires before the container rejects
+      # the request.
+      max-file-size: 12MB
+      max-request-size: 12MB
+
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:fieldwork}
     username: ${DB_USER:fieldwork}
@@ -85,6 +94,26 @@ app:
     # Comma-separated SPA origins allowed to call the API. Locked down —
     # never "*" when credentials are allowed.
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  s3:
+    # Object storage for ticket attachments (Phase 7). All values are
+    # overridable via environment variables (Spring relaxed binding).
+    #
+    # endpoint: S3_ENDPOINT. LocalStack URL in dev — http://localstack:4566
+    #   inside docker compose, http://localhost:4566 when the app runs
+    #   outside compose. Leave empty in production: the SDK then resolves
+    #   the real regional S3 endpoint.
+    # region / bucket / access-key / secret-key: S3_REGION, S3_BUCKET,
+    #   S3_ACCESS_KEY, S3_SECRET_KEY. The "test"/"test" credentials are
+    #   what LocalStack expects; real deployments MUST set real keys.
+    # max-file-size: S3_MAX_FILE_SIZE, in bytes (default 10 MiB).
+    # allowed-content-types: S3_ALLOWED_CONTENT_TYPES, comma-separated.
+    endpoint: ${S3_ENDPOINT:}
+    region: ${S3_REGION:us-east-1}
+    bucket: ${S3_BUCKET:fieldwork-attachments}
+    access-key: ${S3_ACCESS_KEY:test}
+    secret-key: ${S3_SECRET_KEY:test}
+    max-file-size: ${S3_MAX_FILE_SIZE:10485760}
+    allowed-content-types: ${S3_ALLOWED_CONTENT_TYPES:image/jpeg,image/png,application/pdf,text/plain}
 
 logging:
   level:
