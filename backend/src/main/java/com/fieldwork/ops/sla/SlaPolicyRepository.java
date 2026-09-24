@@ -40,4 +40,10 @@ public interface SlaPolicyRepository extends JpaRepository<SlaPolicy, UUID> {
             @Param("priority") WorkOrderPriority priority, @Param("category") String category);
 
     Optional<SlaPolicy> findByPriorityAndCategoryAndActiveTrue(WorkOrderPriority priority, String category);
+
+    /** Ordered policy list for the admin view. */
+    List<SlaPolicy> findAllByOrderByPriorityAscNameAsc();
+
+    /** Dashboard aggregation: how many policies are currently enforcing. */
+    long countByActiveTrue();
 }

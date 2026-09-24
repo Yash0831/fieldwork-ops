@@ -1,5 +1,6 @@
 package com.fieldwork.ops.sla;
 
+import com.fieldwork.ops.common.exception.ResourceNotFoundException;
 import com.fieldwork.ops.sla.event.SlaBreachedEvent;
 import com.fieldwork.ops.workorder.WorkOrder;
 import com.fieldwork.ops.workorder.WorkOrderPriority;
@@ -7,8 +8,11 @@ import com.fieldwork.ops.workorder.WorkOrderStatus;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -151,5 +155,146 @@ public class SlaService {
                 policy.getName(),
                 breachedAt);
         return breach;
+    }
+
+    // ------------------------------------------------------------------
+    // Policy administration (Phase 4 REST)
+    // ------------------------------------------------------------------
+
+    /** All policies, ordered by priority then name, for the admin list view. */
+    @Transactional(readOnly = true)
+    public List<SlaPolicy> listPolicies() {
+        return policies.findAllByOrderByPriorityAscNameAsc();
+    }
+
+    @Transactional(readOnly = true)
+    public SlaPolicy getPolicy(UUID policyId) {
+        return policies
+                .findById(policyId)
+                .orElseThrow(() -> new ResourceNotFoundException("SlaPolicy", policyId));
+    }
+
+    /**
+     * Creates a policy. The response target must not exceed the
+     * resolution target, and an <em>active</em> policy must not collide
+     * with an existing active policy for the same (priority, category)
+     * — the database's partial unique index is the final guard.
+     *
+     * @param requestedBy human-readable actor recorded on audit columns; may be null
+     */
+    @Transactional
+    public SlaPolicy createPolicy(
+            String name,
+            WorkOrderPriority priority,
+            String category,
+            int responseMinutes,
+            int resolutionMinutes,
+            boolean active,
+            String requestedBy) {
+        validateTargets(responseMinutes, resolutionMinutes);
+        String normalizedCategory = normalizeCategory(category);
+        if (active) {
+            assertNoActiveConflict(priority, normalizedCategory, null);
+        }
+        SlaPolicy policy = new SlaPolicy();
+        policy.setName(name);
+        policy.setPriority(priority);
+        policy.setCategory(normalizedCategory);
+        policy.setResponseMinutes(responseMinutes);
+        policy.setResolutionMinutes(resolutionMinutes);
+        policy.setActive(active);
+        policy.setCreatedBy(requestedBy);
+        policy.setUpdatedBy(requestedBy);
+        return policies.save(policy);
+    }
+
+    /**
+     * Full replacement of a policy's mutable fields. A null
+     * {@code active} leaves the current flag untouched.
+     *
+     * @param requestedBy human-readable actor recorded on audit columns; may be null
+     */
+    @Transactional
+    public SlaPolicy updatePolicy(
+            UUID policyId,
+            String name,
+            WorkOrderPriority priority,
+            String category,
+            int responseMinutes,
+            int resolutionMinutes,
+            Boolean active,
+            String requestedBy) {
+        SlaPolicy policy = getPolicy(policyId);
+        validateTargets(responseMinutes, resolutionMinutes);
+        String normalizedCategory = normalizeCategory(category);
+        boolean willBeActive = active != null ? active : policy.isActive();
+        if (willBeActive) {
+            assertNoActiveConflict(priority, normalizedCategory, policyId);
+        }
+        policy.setName(name);
+        policy.setPriority(priority);
+        policy.setCategory(normalizedCategory);
+        policy.setResponseMinutes(responseMinutes);
+        policy.setResolutionMinutes(resolutionMinutes);
+        policy.setActive(willBeActive);
+        policy.setUpdatedBy(requestedBy);
+        log.info("Updated SLA policy '{}' (id={})", name, policyId);
+        return policy;
+    }
+
+    // ------------------------------------------------------------------
+    // Breach reads (Phase 4 REST)
+    // ------------------------------------------------------------------
+
+    /**
+     * Breaches whose deadline passed in [{@code from}, {@code to}].
+     * Null bounds are widened (epoch → now on the injected clock), so
+     * omitting both returns every recorded breach, newest first.
+     */
+    @Transactional(readOnly = true)
+    public List<SlaBreach> listBreaches(OffsetDateTime from, OffsetDateTime to) {
+        OffsetDateTime start = from != null
+                ? from
+                : OffsetDateTime.of(1970, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
+        OffsetDateTime end = to != null ? to : OffsetDateTime.now(clock);
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("'from' must not be after 'to'");
+        }
+        return breaches.findByBreachedAtBetweenOrderByBreachedAtDesc(start, end);
+    }
+
+    // ------------------------------------------------------------------
+    // Internals
+    // ------------------------------------------------------------------
+
+    private void validateTargets(int responseMinutes, int resolutionMinutes) {
+        if (responseMinutes > resolutionMinutes) {
+            throw new IllegalArgumentException(
+                    "responseMinutes (%d) must not exceed resolutionMinutes (%d)"
+                            .formatted(responseMinutes, resolutionMinutes));
+        }
+    }
+
+    private static String normalizeCategory(String category) {
+        return category == null || category.isBlank() ? null : category.strip();
+    }
+
+    /**
+     * Rejects an active policy that would collide with an existing
+     * active policy for the same (priority, category) — a friendly
+     * pre-check ahead of the partial unique index. Category-specific
+     * and applies-to-all rows coexist; only an exact (priority,
+     * category) match conflicts.
+     */
+    private void assertNoActiveConflict(
+            WorkOrderPriority priority, String category, UUID excludeId) {
+        boolean conflict = policies.findActiveCandidates(priority, category).stream()
+                .anyMatch(p -> Objects.equals(p.getCategory(), category)
+                        && (excludeId == null || !p.getId().equals(excludeId)));
+        if (conflict) {
+            throw new IllegalArgumentException(
+                    "An active SLA policy already exists for priority %s and category %s"
+                            .formatted(priority, category == null ? "<all>" : category));
+        }
     }
 }

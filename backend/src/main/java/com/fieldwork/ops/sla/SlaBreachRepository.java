@@ -14,5 +14,10 @@ public interface SlaBreachRepository extends JpaRepository<SlaBreach, UUID> {
 
     List<SlaBreach> findByBreachedAtBetween(OffsetDateTime from, OffsetDateTime to);
 
+    List<SlaBreach> findByBreachedAtBetweenOrderByBreachedAtDesc(OffsetDateTime from, OffsetDateTime to);
+
     List<SlaBreach> findByResolvedAtIsNull();
+
+    /** Dashboard aggregation: breaches still open. */
+    long countByResolvedAtIsNull();
 }

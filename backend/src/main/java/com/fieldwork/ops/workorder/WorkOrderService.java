@@ -9,6 +9,7 @@ import com.fieldwork.ops.common.exception.ResourceNotFoundException;
 import com.fieldwork.ops.sla.SlaService;
 import com.fieldwork.ops.workorder.event.WorkOrderCreatedEvent;
 import com.fieldwork.ops.workorder.event.WorkOrderStatusChangedEvent;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.persistence.EntityManager;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -16,6 +17,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,6 +25,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,9 +49,13 @@ public class WorkOrderService {
     /** How long an idempotency key remains replayable after creation. */
     private static final Duration IDEMPOTENCY_KEY_TTL = Duration.ofHours(24);
 
+    /** Upper bound on the page size accepted by the list endpoint. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final WorkOrderRepository workOrders;
     private final WorkOrderStatusHistoryRepository history;
     private final IdempotencyKeyRepository idempotencyKeys;
+    private final CommentRepository comments;
     private final UserRepository users;
     private final TeamRepository teams;
     private final SlaService slaService;
@@ -65,7 +74,8 @@ public class WorkOrderService {
      * <p>When {@code idempotencyKey} is supplied, a repeated call with the
      * same key returns the original ticket and never creates a duplicate:
      * <ul>
-     *   <li>key already COMPLETED with the same payload → the original ticket is returned;</li>
+     *   <li>key already COMPLETED with the same payload → the original ticket is returned,
+     *       with the exact response body stored at creation time;</li>
      *   <li>key already COMPLETED with a <em>different</em> payload → {@link IdempotencyConflictException}
      *       (client bug);</li>
      *   <li>key IN_PROGRESS and not expired → {@link IdempotencyConflictException}
@@ -81,16 +91,27 @@ public class WorkOrderService {
      *
      * @param requestedBy human-readable actor recorded on audit columns;
      *        may be null for system-driven creation
+     * @param serializer renders the creation response body; invoked inside
+     *        the transaction so lazy associations are available. The
+     *        serialized body is stored on the idempotency row and returned
+     *        verbatim on replay.
+     * @return the ticket plus replay metadata and the response body the
+     *         client must receive
      */
     @Transactional
-    public WorkOrder create(CreateWorkOrderCommand command, String idempotencyKey, String requestedBy) {
+    public WorkOrderCreation create(
+            CreateWorkOrderCommand command,
+            String idempotencyKey,
+            String requestedBy,
+            WorkOrderResponseSerializer serializer) {
         Objects.requireNonNull(command, "command must not be null");
+        Objects.requireNonNull(serializer, "serializer must not be null");
         String key = normalizeKey(idempotencyKey);
 
         if (key != null) {
             Optional<IdempotencyKey> existing = idempotencyKeys.findById(key);
             if (existing.isPresent()) {
-                WorkOrder replayed = replay(existing.get(), command);
+                WorkOrderCreation replayed = replay(existing.get(), command, serializer);
                 if (replayed != null) {
                     return replayed;
                 }
@@ -114,7 +135,8 @@ public class WorkOrderService {
                                 .findById(key)
                                 .orElseThrow(() -> new IdempotencyConflictException(
                                         key, "key was claimed concurrently but the row is not visible")),
-                        command);
+                        command,
+                        serializer);
             }
         }
 
@@ -127,7 +149,6 @@ public class WorkOrderService {
                         .orElseThrow(() -> new ResourceNotFoundException("Team", command.teamId()));
 
         WorkOrder workOrder = new WorkOrder();
-        // TODO(Phase 4): TicketNumberGenerator bean allocating from ticket_number_seq (WO-YYYY-NNNNNN).
         workOrder.setTicketNumber(ticketNumbers.generate());
         workOrder.setTitle(command.title());
         workOrder.setDescription(command.description());
@@ -146,12 +167,17 @@ public class WorkOrderService {
 
         recordHistory(workOrder, null, WorkOrderStatus.OPEN, null, "Ticket created");
 
+        // Flush so @CreationTimestamp/@UpdateTimestamp/@Version are populated
+        // before the response is serialized — the stored bytes must match what
+        // a live (post-commit) serialization would produce.
+        workOrders.flush();
+        String responseBody = serialize(serializer, workOrder);
+
         if (claim != null) {
             claim.setWorkOrder(workOrder);
             claim.setStatus(IdempotencyStatus.COMPLETED);
             claim.setResponseStatus(201);
-            // TODO(Phase 4): persist the serialized creation response in
-            // responseBody so replays can return the original payload.
+            claim.setResponseBody(responseBody);
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
@@ -160,7 +186,7 @@ public class WorkOrderService {
                 "Created ticket {} (idempotency key: {})",
                 workOrder.getTicketNumber(),
                 key == null ? "<none>" : key);
-        return workOrder;
+        return new WorkOrderCreation(workOrder, false, responseBody, 201);
     }
 
     // ------------------------------------------------------------------
@@ -225,6 +251,63 @@ public class WorkOrderService {
         return loadWorkOrder(workOrderId);
     }
 
+    /**
+     * Paged ticket search for the queue endpoint. All filters are
+     * optional; the page size is clamped to {@value #MAX_PAGE_SIZE} so a
+     * client cannot request an unbounded page.
+     */
+    @Transactional(readOnly = true)
+    public Page<WorkOrder> search(
+            WorkOrderStatus status,
+            WorkOrderPriority priority,
+            UUID teamId,
+            UUID assigneeId,
+            Pageable pageable) {
+        Pageable bounded = pageable.getPageSize() > MAX_PAGE_SIZE
+                ? PageRequest.of(pageable.getPageNumber(), MAX_PAGE_SIZE, pageable.getSort())
+                : pageable;
+        return workOrders.search(status, priority, teamId, assigneeId, bounded);
+    }
+
+    /**
+     * Full status history of a ticket, oldest first. Loads the ticket
+     * first so an unknown id yields 404 rather than an empty list.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkOrderStatusHistory> getHistory(UUID workOrderId) {
+        loadWorkOrder(workOrderId);
+        return history.findByWorkOrderIdOrderByChangedAtAsc(workOrderId);
+    }
+
+    // ------------------------------------------------------------------
+    // Comments
+    // ------------------------------------------------------------------
+
+    /**
+     * Appends a comment to a ticket's thread.
+     *
+     * @param authorId the comment's author (explicit until Phase 5
+     *        resolves the principal from authentication)
+     * @param requestedBy human-readable actor recorded on audit columns;
+     *        may be null for system-driven comments
+     */
+    @Transactional
+    public Comment addComment(
+            UUID workOrderId, UUID authorId, String body, boolean internal, String requestedBy) {
+        WorkOrder workOrder = loadWorkOrder(workOrderId);
+        User author = users
+                .findById(authorId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", authorId));
+        Comment comment = new Comment();
+        comment.setWorkOrder(workOrder);
+        comment.setAuthor(author);
+        comment.setBody(body);
+        comment.setInternal(internal);
+        comment.setCreatedBy(requestedBy);
+        comment.setUpdatedBy(requestedBy);
+        return comments.save(comment);
+    }
+
     // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------
@@ -280,11 +363,13 @@ public class WorkOrderService {
     }
 
     /**
-     * Replays an existing idempotency row. Returns the original ticket, or
-     * {@code null} when the row was stale/failed and has been reclaimed —
-     * the caller then proceeds with a fresh claim.
+     * Replays an existing idempotency row. Returns the original creation
+     * result — including the stored response body — or {@code null} when
+     * the row was stale/failed and has been reclaimed; the caller then
+     * proceeds with a fresh claim.
      */
-    private WorkOrder replay(IdempotencyKey existing, CreateWorkOrderCommand command) {
+    private WorkOrderCreation replay(
+            IdempotencyKey existing, CreateWorkOrderCommand command, WorkOrderResponseSerializer serializer) {
         String key = existing.getIdemKey();
         if (existing.getStatus() != IdempotencyStatus.COMPLETED) {
             if (existing.getExpiresAt().isBefore(OffsetDateTime.now(clock))) {
@@ -306,8 +391,15 @@ public class WorkOrderService {
         if (workOrder == null) {
             throw new IdempotencyConflictException(key, "key is completed but references no ticket");
         }
+        String responseBody = existing.getResponseBody();
+        if (responseBody == null || responseBody.isBlank()) {
+            // Defensive: rows completed before response bodies were stored
+            // carry none — re-serialize from the ticket instead of failing.
+            responseBody = serialize(serializer, workOrder);
+        }
+        int responseStatus = existing.getResponseStatus() != null ? existing.getResponseStatus() : 201;
         log.info("Idempotent replay for key {}: returning original ticket {}", key, workOrder.getTicketNumber());
-        return workOrder;
+        return new WorkOrderCreation(workOrder, true, responseBody, responseStatus);
     }
 
     private IdempotencyKey newClaim(String key, CreateWorkOrderCommand command, String requestedBy) {
@@ -327,6 +419,15 @@ public class WorkOrderService {
             return null;
         }
         return idempotencyKey.strip();
+    }
+
+    /** Renders the creation response body, wrapping the checked Jackson exception. */
+    private static String serialize(WorkOrderResponseSerializer serializer, WorkOrder workOrder) {
+        try {
+            return serializer.serialize(workOrder);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize work-order creation response", e);
+        }
     }
 
     /** Stable SHA-256 fingerprint of the creation payload, for replay validation. */
