@@ -105,6 +105,22 @@ public class WorkOrder {
     @Column(name = "estimated_hours", precision = 6, scale = 2)
     private BigDecimal estimatedHours;
 
+    /**
+     * Total seconds the SLA clock has been paused across all ON_HOLD
+     * spells. Accumulated by {@code SlaService} when a hold ends; the
+     * Phase 6 breach scanner subtracts this (plus any ongoing hold) from
+     * the ticket's age before comparing against policy targets.
+     */
+    @Column(name = "sla_paused_seconds", nullable = false)
+    private long slaPausedSeconds = 0;
+
+    /**
+     * When the current ON_HOLD spell started. Non-null only while the
+     * ticket is ON_HOLD; cleared when the hold ends.
+     */
+    @Column(name = "on_hold_since")
+    private OffsetDateTime onHoldSince;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version;

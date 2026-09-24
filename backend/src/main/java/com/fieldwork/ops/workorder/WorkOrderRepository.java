@@ -1,5 +1,6 @@
 package com.fieldwork.ops.workorder;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +13,9 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, UUID> {
     List<WorkOrder> findByStatus(WorkOrderStatus status);
 
     List<WorkOrder> findByAssigneeIdAndStatus(UUID assigneeId, WorkOrderStatus status);
+
+    /** Workload accounting for the dispatch rule: active tickets held by a technician. */
+    long countByAssigneeIdAndStatusIn(UUID assigneeId, Collection<WorkOrderStatus> statuses);
 
     List<WorkOrder> findByRequesterId(UUID requesterId);
 

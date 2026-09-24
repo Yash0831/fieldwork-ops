@@ -2,8 +2,9 @@ package com.fieldwork.ops.workorder;
 
 /**
  * Guarded work-order lifecycle. Transitions are owned by the Phase 3
- * state machine; nothing outside the workorder module may change a
- * status directly. Mirrors chk_work_orders_status.
+ * state machine ({@code WorkOrderStateMachine}); nothing outside the
+ * workorder module may change a status directly. Mirrors
+ * chk_work_orders_status (extended with CANCELLED in V7).
  */
 public enum WorkOrderStatus {
     OPEN,
@@ -11,5 +12,6 @@ public enum WorkOrderStatus {
     IN_PROGRESS,
     ON_HOLD,
     RESOLVED,
-    CLOSED
+    CLOSED,
+    CANCELLED
 }

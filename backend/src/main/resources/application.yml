@@ -64,6 +64,12 @@ info:
     name: fieldwork-ops
     description: Field Service Work-Order & SLA Management Platform
 
+# Phase 3 dispatch rules: workload guard for technician assignment.
+dispatch:
+  # A technician may hold at most this many OPEN/IN_PROGRESS tickets;
+  # further assignment is rejected until their load drops.
+  max-open-tickets-per-technician: 8
+
 logging:
   level:
     com.fieldwork.ops: INFO
